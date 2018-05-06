@@ -2,6 +2,7 @@
 library(lubridate)
 library(dplyr)
 library(ggplot2)
+library(ggrepel)
 library(rstan)
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
