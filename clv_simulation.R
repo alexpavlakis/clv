@@ -37,7 +37,7 @@ custs %>%
                      limits = c(0.5, 10.5),
                      breaks = seq(1, 10, 1),
                      labels = paste("Customer", c(1:10))) +
-  geom_vline(xintercept = now,
+  geom_vline(xintercept = date("2020-05-20"),
              col = acp_red,
              lty = 2,
              lwd = 0.5) +
