@@ -1,4 +1,5 @@
 # Set up
+library(ggridges)
 library(lubridate)
 library(dplyr)
 library(ggplot2)
@@ -6,54 +7,50 @@ library(ggrepel)
 library(rstan)
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
-source("https://raw.githubusercontent.com/alexpavlakis/themes/master/theme_acp.R")
+source("https://raw.githubusercontent.com/alexpavlakis/themes/master/theme_og.R")
 
-# Generate fake data
-N_purch <- 40
-set.seed(56)
-custs <- data.frame(customer_id = sample(c(1:10), replace = T, size = N_purch),
-                    logged = seq.Date(from = date("2016-01-01"), 
-                                      to = date("2018-05-01"),
-                                      length.out = N_purch),
-                    spending = round(rgamma(N_purch, 5, 0.05))) 
+# Read in and format a sample of the cdnow data set
+custs <- read.table("CDNOW_sample.txt") %>%
+  select(-V1) %>%
+  mutate(customer_id = V2,
+         logged = as.Date(as.character(V3), format = "%Y%m%d"),
+         total = V5) %>%
+  filter(customer_id < 100, total > 0) %>%
+  group_by(customer_id, logged) %>%
+  summarise(spending = sum(total))
 
 # Plot customer timeline
 custs %>%
-  mutate(prod_price = paste0("$", spending)) %>%
   ggplot() +
-  aes(x = logged, y = customer_id) +
-  geom_hline(yintercept = c(1:10),
+  aes(x = logged, y = customer_id, size = spending) +
+  geom_hline(yintercept = c(1:max(custs$customer_id)),
              col = "grey1",
-             lty = 2) +
-  geom_point(pch = 3,
-             cex = 2) +
-  geom_text_repel(aes(label = prod_price),
-            col = acp_blue,
-            nudge_y = 0.2,
-            size = 5) +
+             lty = 1,
+             cex = 0.05) +
+  geom_point(col = "darkgrey") +
   scale_x_date("",
-               limits = c(date("2016-01-01"), date("2020-01-01"))) +
-  scale_y_continuous("",
-                     limits = c(0.5, 10.5),
-                     breaks = seq(1, 10, 1),
-                     labels = paste("Customer", c(1:10))) +
-  geom_vline(xintercept = date("2020-05-20"),
-             col = acp_red,
+               limits = c(date("1997-01-01"), date("2000-01-01"))) +
+  scale_y_discrete("",
+                   limits = c(1:max(custs$customer_id)),
+                   breaks = c(1:max(custs$customer_id)),
+                   labels = paste("Customer", c(1:max(custs$customer_id)))) +
+  geom_vline(xintercept = max(custs$logged),
+             col = og_orange,
              lty = 2,
              lwd = 0.5) +
-  annotate("text", x = date("2019-04-01"), y = 5, 
+  annotate("text", x = date("1999-04-01"), y = 50, 
            label = "?",
-           col = acp_red,
+           col = og_orange,
            size = 50,
            family = "Times") +
-  theme_acp() +
+  theme_og() +
   theme(axis.line.y = element_blank(),
         panel.grid.major = element_blank(),
-        axis.text.y = element_text(face = "bold"))
+        axis.text.y = element_text(face = "bold", size = 3))
 
-# Format data for modeling
+# Format data for modeling (months)
 start_day <- date(min(custs$logged))
-end_day <- date("2018-05-20")
+end_day <- date(max(custs$logged))
 
 customer_data <- custs %>%
   group_by(customer_id) %>%
@@ -69,23 +66,89 @@ model_data <- list(
   t_cal = as.numeric(customer_data$t_cal),
   mx = customer_data$mx,
   N = nrow(customer_data),
-  N_months = 20
+  N_months = 60
 )
 
 # Fit model
 model_fit <- stan(file = "full_clv.stan",
                   data = model_data,
-                  chains = 3,
+                  chains = 4,
                   iter = 1000)
 
-# Plot of posterior distributions of LTV
-plot(model_fit, pars = "lt_val", ci_level = 0.8) +
-  scale_y_continuous(labels = paste("Customer", seq(1, 10, 1)), 
-                     breaks = 1:10) +
-  scale_x_continuous(" ",
-                     limits = c(0, 1250),
-                     breaks = seq(0, 1250, 250),
-                     labels = paste0("$", seq(0, 1250, 250))) +
-  ggtitle("Distributions of customer spending over the next two years") +
-  theme_acp() +
-  theme(text = element_text(angle = 0))
+# Plot of expected transaction distributions
+exp_trans_dist <- data.frame(distro = c(extract(model_fit)$exp_trans),
+                             customer_id = rev(factor(rep(c(1:99), each = 2000)))) %>%
+  mutate(customer = paste("Customer", customer_id)) %>%
+  group_by(customer_id) %>%
+  mutate(mean_trans = mean(distro)) %>%
+  ungroup()
+
+exp_trans_dist %>%
+  ggplot() +
+  aes(x = distro, y = reorder(customer, mean_trans)) +
+  geom_density_ridges() +
+  xlim(c(0, 100)) +
+  ggtitle("Expected future transactions") +
+  ylab("") +
+  xlab("") +
+  theme_og() +
+  theme(axis.text.y = element_text(size = 4))
+
+# PLot of churn rate distributions
+churn_p_dist <- data.frame(distro = 1 - c(extract(model_fit)$p_alive),
+                           customer_id = rev(factor(rep(c(1:99), each = 2000)))) %>%
+  mutate(customer = paste("Customer", customer_id),
+         distro = if_else(distro < 0, 0, distro),
+         distro = if_else(distro > 1, 1, distro)) %>%
+  group_by(customer_id) %>%
+  mutate(mean_churn = mean(distro)) %>%
+  ungroup()
+
+churn_p_dist %>%
+  ggplot() +
+  aes(x = distro, y = reorder(customer, mean_churn)) +
+  geom_density_ridges() +
+  xlim(c(0, 1)) +
+  ylab("") +
+  xlab("") +
+  ggtitle("Distribution of churn probabilities") +
+  theme_og() +
+  theme(axis.text.y = element_text(size = 4))
+
+# PLot of LTV distributions
+lt_val_dist <- data.frame(distro = c(extract(model_fit)$lt_val),
+                          customer_id = rev(factor(rep(c(1:99), each = 2000)))) %>%
+  mutate(customer = paste("Customer", customer_id)) %>%
+  group_by(customer_id) %>%
+  mutate(mean_trans = mean(distro)) %>%
+  ungroup()
+
+lt_val_dist %>%
+  ggplot() +
+  aes(x = distro, y = reorder(customer, mean_trans)) +
+  geom_density_ridges() +
+  xlim(c(0, 5000)) +
+  ggtitle("Distribution of total spending over next 5 years") +
+  ylab("") +
+  xlab("") +
+  theme_og() +
+  theme(axis.text.y = element_text(size = 4))
+
+# Plot of spending distributions
+mx_pred_dist <- data.frame(distro = c(extract(model_fit)$mx_pred),
+                             customer_id = rev(factor(rep(c(1:99), each = 2000)))) %>%
+  mutate(customer = paste("Customer", customer_id)) %>%
+  group_by(customer_id) %>%
+  mutate(mean_trans = mean(distro)) %>%
+  ungroup()
+
+mx_pred_dist %>%
+  ggplot() +
+  aes(x = distro, y = reorder(customer, mean_trans)) +
+  geom_density_ridges() +
+  xlim(c(0, 200)) +
+  ggtitle("Distributions of per transaction spending") +
+  ylab("") +
+  xlab("") +
+  theme_og() +
+  theme(axis.text.y = element_text(size = 4))
