@@ -7,7 +7,7 @@ library(ggrepel)
 library(rstan)
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
-source("https://raw.githubusercontent.com/alexpavlakis/themes/master/theme_og.R")
+source("https://raw.githubusercontent.com/alexpavlakis/clv/master/theme_og.R")
 
 # Read in and format a sample of the cdnow data set
 custs <- read.table("CDNOW_sample.txt") %>%
